@@ -618,10 +618,10 @@ body{
     <select id="f-area">
       <option value="">Pilih area...</option>
       <option>Filling Retail </option>
-      <option>Packing Retail </option>
-      <option>Gravity Roller</option>
+      <option>Packing Retail</option>
+      <option>Gravity Rolller</option>
       <option>Workshop</option>
-      <option>Pasteur/option>
+      <option>Pasteur</option>
       <option>Storage</option>
       <option>Lainnya</option>
     </select>
@@ -733,7 +733,8 @@ body{
     <div class="photo-grid" id="photoGrid">
       <!-- Rendered by JS -->
     </div>
-    <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none;" multiple onchange="handlePhotoInput(event)">
+    <input type="file" id="photoInputCamera"  accept="image/*" capture="environment" style="display:none;" multiple onchange="handlePhotoInput(event)">
+    <input type="file" id="photoInputGallery" accept="image/*"                       style="display:none;" multiple onchange="handlePhotoInput(event)">
   </div>
 
   <!-- Submit -->
@@ -804,6 +805,26 @@ body{
 </div>
 
 <!-- ═══ LIGHTBOX ═══ -->
+<!-- PHOTO SOURCE PICKER -->
+<div id="photoSourceOverlay" style="display:none;position:fixed;inset:0;z-index:350;background:rgba(0,0,0,.6);backdrop-filter:blur(3px);" onclick="closePhotoSourcePicker()"></div>
+<div id="photoSourceSheet" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:351;background:var(--surface);border-radius:20px 20px 0 0;border-top:1px solid var(--border);padding:20px 20px calc(20px + env(safe-area-inset-bottom));animation:slideUp .25s cubic-bezier(.4,0,.2,1);">
+  <div style="width:36px;height:4px;background:var(--border2);border-radius:2px;margin:0 auto 18px;"></div>
+  <div style="font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:1.5px;color:var(--text3);text-transform:uppercase;margin-bottom:14px;text-align:center;">Pilih Sumber Foto</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+    <button onclick="pickPhotoSource('camera')" style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px 12px;background:var(--surface2);border:1.5px solid var(--border);border-radius:var(--radius);cursor:pointer;">
+      <span style="font-size:32px;">📷</span>
+      <span style="font-size:13px;font-weight:700;color:var(--text);">Kamera</span>
+      <span style="font-size:10px;color:var(--text3);">Ambil foto baru</span>
+    </button>
+    <button onclick="pickPhotoSource('gallery')" style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px 12px;background:var(--surface2);border:1.5px solid var(--border);border-radius:var(--radius);cursor:pointer;">
+      <span style="font-size:32px;">🖼️</span>
+      <span style="font-size:13px;font-weight:700;color:var(--text);">Galeri</span>
+      <span style="font-size:10px;color:var(--text3);">Pilih dari galeri</span>
+    </button>
+  </div>
+  <button onclick="closePhotoSourcePicker()" style="width:100%;padding:13px;background:transparent;border:1.5px solid var(--border);border-radius:var(--radius-sm);color:var(--text2);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;">Batal</button>
+</div>
+
 <div class="lightbox" id="lightbox" onclick="closeLightbox()">
   <button class="lightbox-close" onclick="closeLightbox()">✕</button>
   <button class="lightbox-nav prev" onclick="lbNav(-1,event)">‹</button>
@@ -1193,7 +1214,23 @@ function renderPhotoGrid(){
 
 function triggerPhoto(){
   if(state.photos.length >= MAX_PHOTOS){ toast('Maks 4 foto','warn'); return; }
-  document.getElementById('photoInput').click();
+  openPhotoSourcePicker();
+}
+
+function openPhotoSourcePicker(){
+  document.getElementById('photoSourceOverlay').style.display = 'block';
+  document.getElementById('photoSourceSheet').style.display   = 'block';
+}
+
+function closePhotoSourcePicker(){
+  document.getElementById('photoSourceOverlay').style.display = 'none';
+  document.getElementById('photoSourceSheet').style.display   = 'none';
+}
+
+function pickPhotoSource(source){
+  closePhotoSourcePicker();
+  const inputId = source === 'camera' ? 'photoInputCamera' : 'photoInputGallery';
+  document.getElementById(inputId).click();
 }
 
 async function handlePhotoInput(e){
@@ -2053,7 +2090,7 @@ function openWOSheet(id){
     <div style="height:4px;"></div>
     <div id="sheet-btn-wrap"></div>
     </div>`;
-
+    
   document.getElementById('sheet-body-content').innerHTML = `
     ${field('Nama Pekerjaan', w.desc||'—')}
     ${field('Mesin / Area', w.machine||'—')}
@@ -2069,6 +2106,7 @@ function openWOSheet(id){
     <button class="btn-primary" onclick="prefillFormFromWO('${w.no||w.id}');closeSheetDirect();goPage('form',document.getElementById('tab-form'))">
       ✍️ Buat Laporan untuk WO ini
     </button>`;
+
 
   document.getElementById('woSheet').classList.add('open');
 }
