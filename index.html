@@ -592,12 +592,12 @@ body{
     <div class="field-label"><span class="required-dot"></span> Area / Unit</div>
     <select id="f-area">
       <option value="">Pilih area...</option>
-      <option>Area Produksi D</option>
-      <option>Area Produksi C</option>
+      <option>Filling Retail</option>
+      <option>Packing Retail</option>
       <option>Utility</option>
       <option>Workshop</option>
-      <option>Gudang</option>
-      <option>Kantor</option>
+      <option>Pasteur</option>
+      <option>Dissolver</option>
       <option>Lainnya</option>
     </select>
   </div>
@@ -605,9 +605,25 @@ body{
   <!-- Plan / WO Terkait -->
   <div class="field">
     <div class="field-label">Plan / WO Terkait</div>
-    <select id="f-plan">
+    <select id="f-plan" onchange="onWOPlanChange(this.value)">
       <option value="">-- Pilih WO (opsional) --</option>
     </select>
+  </div>
+
+  <!-- WO Assignee Info Panel -->
+  <div id="wo-assignee-panel" style="display:none;background:rgba(59,130,246,.06);border:1.5px solid rgba(59,130,246,.25);border-radius:var(--radius-sm);padding:12px 14px;">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">👥 Tim WO Ini</div>
+    <div id="wo-assignee-list"></div>
+    <div id="wo-my-duration-wrap" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid rgba(59,130,246,.2);">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:1px;margin-bottom:5px;">DURASI KETERLIBATANMU</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="background:rgba(59,130,246,.12);border-radius:8px;padding:6px 12px;font-family:var(--mono);font-size:14px;font-weight:700;color:var(--accent);" id="wo-my-duration-badge">—</div>
+        <div style="font-size:10px;color:var(--text2);">menit (sesuai pembagian planner)<br>Input waktu aktual di form ↓</div>
+      </div>
+    </div>
+    <div id="wo-my-note-wrap" style="display:none;margin-top:8px;">
+      <div style="font-size:10px;color:var(--text2);font-style:italic;" id="wo-my-note-text"></div>
+    </div>
   </div>
 
   <!-- Ad-hoc Toggle -->
@@ -729,8 +745,8 @@ body{
 
   <div class="filter-bar" id="wo-filters">
     <div class="filter-chip active" data-filter="all" onclick="setFilter(this)">Semua</div>
+    <div class="filter-chip" data-filter="mine" onclick="setFilter(this)">👤 WO-ku</div>
     <div class="filter-chip" data-filter="open" onclick="setFilter(this)">Open</div>
-    <div class="filter-chip" data-filter="assigned" onclick="setFilter(this)">Assigned</div>
     <div class="filter-chip" data-filter="progress" onclick="setFilter(this)">In Progress</div>
     <div class="filter-chip" data-filter="done" onclick="setFilter(this)">Done</div>
   </div>
@@ -1028,6 +1044,9 @@ async function syncData(){
     renderWOList();
     renderWOStats();
     setSyncUI('ok');
+    // Refresh assignee panel if a WO is already selected in form
+    const curWO = document.getElementById('f-plan')?.value;
+    if(curWO) onWOPlanChange(curWO);
     toast('✓ Data diperbarui', 'success');
   } catch(e){
     console.error(e);
@@ -1052,11 +1071,24 @@ function setSyncUI(s){
 function populateWOSelect(){
   const sel = document.getElementById('f-plan');
   const cur = sel.value;
+  const myName = (document.getElementById('f-tech')?.value||'').trim();
   sel.innerHTML = '<option value="">-- Pilih WO (opsional) --</option>';
+
   state.woList
     .filter(w=>w.status!=='done'&&w.status!=='closed'&&w.status!=='cancel')
     .forEach(w=>{
-      sel.innerHTML += `<option value="${w.no||w.id}">${w.no||''} — ${w.machine||''}: ${(w.desc||'').slice(0,40)}</option>`;
+      // Check if this tech is an assignee
+      const myAssignee = (w.assignees||[]).find(a=>a.tech===myName);
+      const isAssigned = w.pic===myName || !!myAssignee;
+      const durLabel   = myAssignee && myAssignee.duration ? ` [${myAssignee.duration}m]` : '';
+      const multiLabel = (w.assignees&&w.assignees.length>1) ? ` 👥${w.assignees.length}` : '';
+      const prefix     = isAssigned ? '✅ ' : '';
+      const label = `${prefix}${w.no||''} — ${w.machine||''}: ${(w.desc||'').slice(0,35)}${durLabel}${multiLabel}`;
+      const opt = document.createElement('option');
+      opt.value = w.no||w.id;
+      opt.textContent = label;
+      if(isAssigned) opt.style.fontWeight = '700';
+      sel.appendChild(opt);
     });
   sel.value = cur;
 }
@@ -1295,9 +1327,32 @@ async function _pushToGAS(newReport, woRef, status, isAdhoc, adhocTitle, area, d
       const woList = current.wo||[];
       const idx = woList.findIndex(w=>w.no===woRef||w.id===woRef);
       if(idx>-1){
-        woList[idx].status   = status==='done'?'done':status==='progress'?'progress':woList[idx].status;
-        woList[idx].progress = status==='done'?100:status==='progress'?50:woList[idx].progress||0;
-        if(newReport?.work) woList[idx].action = newReport.work;
+        const wo = woList[idx];
+        const assignees = wo.assignees||[];
+
+        if(assignees.length > 1){
+          // Multi-assignee: update status assignee ini saja
+          const aIdx = assignees.findIndex(a=>a.tech===newReport.tech);
+          if(aIdx>-1){
+            assignees[aIdx].status = status;
+            assignees[aIdx].doneAt = status==='done' ? new Date().toISOString() : null;
+          }
+          wo.assignees = assignees;
+
+          // WO keseluruhan: done hanya jika SEMUA assignee done
+          const allDone   = assignees.every(a=>a.status==='done');
+          const anyProgress = assignees.some(a=>a.status==='progress');
+          wo.status = allDone ? 'done' : anyProgress ? 'progress' : wo.status;
+          wo.progress = allDone ? 100
+            : Math.round(assignees.filter(a=>a.status==='done').length / assignees.length * 100);
+        } else {
+          // Single assignee: behavior lama
+          wo.status   = status==='done'?'done':status==='progress'?'progress':wo.status;
+          wo.progress = status==='done'?100:status==='progress'?50:wo.progress||0;
+        }
+
+        if(newReport?.work) wo.action = newReport.work;
+        woList[idx] = wo;
         current.wo = woList;
       }
     }
@@ -1336,6 +1391,9 @@ function resetForm(){
   document.getElementById('f-time-start').value = '';
   document.getElementById('f-time-end').value = '';
   document.getElementById('f-notes').value = '';
+  // Reset assignee panel
+  const panel = document.getElementById('wo-assignee-panel');
+  if(panel) panel.style.display = 'none';
   // Reset ad-hoc
   const adhocChk = document.getElementById('f-adhoc-check');
   if(adhocChk){ adhocChk.checked=false; toggleAdhoc(false); }
@@ -1593,6 +1651,34 @@ function openReportDetail(id){
     + '<div style="height:8px;"></div>'
     + btnUpdate + btnEdit;
 
+  // Fill the action button after innerHTML is set
+  (function(){
+    var btnWrap = document.getElementById('sheet-btn-wrap');
+    if(!btnWrap) return;
+    var myName = (document.getElementById('f-tech')&&document.getElementById('f-tech').value||localStorage.getItem('pm_tech_name')||'').trim();
+    var myA = myName ? (w.assignees||[]).find(function(a){return a.tech===myName;}) : null;
+    var alreadyDone = myA && myA.status==='done';
+    var btnLabel = alreadyDone
+      ? '✅ Kirim Update Lanjutan (bagianmu sudah done)'
+      : myA
+        ? '✍️ Buat Laporan — Bagianmu: '+(myA.duration||'?')+'m'+(myA.note?' · '+myA.note.slice(0,25):'')
+        : '✍️ Buat Laporan untuk WO ini';
+    var btn = document.createElement('button');
+    btn.className = 'btn-primary';
+    if(alreadyDone){
+      btn.style.cssText = 'background:rgba(16,185,129,.15);color:var(--green);border:1.5px solid var(--green);';
+    }
+    btn.textContent = btnLabel;
+    var woId = w.no||w.id;
+    btn.addEventListener('click', function(){
+      prefillFormFromWO(woId);
+      closeSheetDirect();
+      goPage('form', document.getElementById('tab-form'));
+    });
+    btnWrap.innerHTML = '';
+    btnWrap.appendChild(btn);
+  })();
+
   document.getElementById('woSheet').classList.add('open');
 }
 
@@ -1629,13 +1715,23 @@ function renderWOList(){
   const search = (document.getElementById('wo-search')?.value||'').toLowerCase();
   let list     = [...state.woList];
 
-  if(_woFilter !== 'all') list = list.filter(w=>w.status===_woFilter);
-  if(search) list = list.filter(w=>
-    (w.no||'').toLowerCase().includes(search)||
-    (w.machine||'').toLowerCase().includes(search)||
-    (w.desc||'').toLowerCase().includes(search)||
-    (w.pic||'').toLowerCase().includes(search)
-  );
+  if(_woFilter === 'mine'){
+    const myName = (document.getElementById('f-tech')?.value||localStorage.getItem('pm_tech_name')||'').trim();
+    list = list.filter(w=>{
+      if(!myName) return false;
+      return w.pic===myName || (w.assignees&&w.assignees.some(a=>a.tech===myName));
+    });
+  } else if(_woFilter !== 'all'){
+    list = list.filter(w=>w.status===_woFilter);
+  }
+  if(search) list = list.filter(w=>{
+    const assigneeNames = (w.assignees||[]).map(a=>a.tech||'').join(' ').toLowerCase();
+    return (w.no||'').toLowerCase().includes(search)
+      || (w.machine||'').toLowerCase().includes(search)
+      || (w.desc||'').toLowerCase().includes(search)
+      || (w.pic||'').toLowerCase().includes(search)
+      || assigneeNames.includes(search);
+  });
 
   const prioOrder = {C:0,H:1,M:2,L:3};
   list.sort((a,b)=>(prioOrder[a.priority]||2)-(prioOrder[b.priority]||2));
@@ -1693,6 +1789,35 @@ function renderWOList(){
         ${w.machine?`<span class="wo-chip chip-cyan">⚙ ${w.machine}</span>`:''}
       </div>
 
+      <!-- MY ASSIGNMENT BADGE -->
+      ${(function(){
+        const myName = (document.getElementById('f-tech')?.value||localStorage.getItem('pm_tech_name')||'').trim();
+        if(!myName) return '';
+        const myA = (w.assignees||[]).find(a=>a.tech===myName);
+        const isMe = myA || w.pic===myName;
+        if(!isMe) return '';
+        if(w.assignees && w.assignees.length > 1 && myA){
+          const myDone = myA.status === 'done';
+          const allDone = w.assignees.every(a=>a.status==='done');
+          const doneCount = w.assignees.filter(a=>a.status==='done').length;
+          return `<div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;
+                    padding:8px 10px;margin:4px 0;display:flex;align-items:center;gap:8px;">
+            <span style="font-size:13px;">${myDone?'✅':'👤'}</span>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:11px;font-weight:700;color:#3b82f6;">
+                ${myDone?'Bagianmu selesai':'Kamu terlibat di WO ini'}
+                <span style="font-weight:400;color:var(--text2);"> · ⏱ ${myA.duration||'?'}m</span>
+              </div>
+              <div style="font-size:10px;color:var(--text2);">
+                Progress tim: ${doneCount}/${w.assignees.length} teknisi selesai
+                ${myA.note?` · <i>${myA.note.slice(0,30)}</i>`:''}
+              </div>
+            </div>
+          </div>`;
+        }
+        return '';
+      })()}
+
       <!-- LAPORAN TEKNISI — konfirmasi masuk -->
       ${hasReport?`
       <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);border-radius:8px;
@@ -1729,11 +1854,21 @@ function renderWOList(){
 
       <!-- FOOTER -->
       <div class="wo-footer" style="margin-top:${hasReport?'6px':'2px'};">
-        <div class="wo-pic">
-          ${w.pic?`<div class="wo-avatar">${initials}</div><span>${w.pic}</span>`
-            :'<span style="color:var(--text3)">Belum assigned</span>'}
+        <div class="wo-pic" style="flex:1;min-width:0;overflow:hidden;">
+          ${(w.assignees&&w.assignees.length>1)
+            ? `<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                ${w.assignees.slice(0,3).map(a=>{
+                  const ini=a.tech.split(' ').map(s=>s[0]||'').slice(0,2).join('').toUpperCase();
+                  return `<div class="wo-avatar" title="${a.tech} (${a.duration||'?'}m)" style="width:24px;height:24px;font-size:9px;">${ini}</div>`;
+                }).join('')}
+                ${w.assignees.length>3?`<span style="font-size:9px;color:var(--text3);">+${w.assignees.length-3}</span>`:''}
+                <span style="font-size:10px;color:var(--text2);margin-left:2px;">👥 ${w.assignees.length} teknisi</span>
+              </div>`
+            : (w.pic?`<div class="wo-avatar">${initials}</div><span>${w.pic}</span>`
+                :'<span style="color:var(--text3)">Belum assigned</span>')
+          }
         </div>
-        ${w.target?`<div style="font-family:var(--mono);font-size:9px;color:var(--text3);">📅 ${fmtDate(w.target)}</div>`:''}
+        ${w.target?`<div style="font-family:var(--mono);font-size:9px;color:var(--text3);white-space:nowrap;">📅 ${fmtDate(w.target)}</div>`:''}
       </div>
 
     </div>`;
@@ -1819,7 +1954,21 @@ function openWOSheet(id){
   document.getElementById('sheet-body-content').innerHTML = `
     ${field('Nama Pekerjaan', w.desc||'—')}
     ${field('Mesin / Area', w.machine||'—')}
-    ${field('PIC / Teknisi', w.pic||'Belum assigned')}
+    ${(function(){
+      if(w.assignees && w.assignees.length > 1){
+        const rows = w.assignees.map(function(a){
+          return '<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--border);">'
+            + '<div style="width:22px;height:22px;border-radius:50%;background:rgba(59,130,246,.15);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#3b82f6;flex-shrink:0;">'
+            +   a.tech.split(' ').map(function(s){return s[0]||'';}).slice(0,2).join('').toUpperCase()
+            + '</div>'
+            + '<div style="flex:1;"><b>'+a.tech+'</b>'+(a.isPic?' <span style="font-size:9px;background:rgba(59,130,246,.15);color:#3b82f6;padding:1px 5px;border-radius:4px;">PIC</span>':'')+'</div>'
+            + '<div style="font-family:var(--mono);font-size:10px;color:var(--text2);">⏱'+(a.duration||'—')+'m'+(a.note?' · '+a.note.slice(0,20):'')+'</div>'
+            + '</div>';
+        }).join('');
+        return field('Tim Teknisi ('+w.assignees.length+')', '<div style="margin-top:4px;">'+rows+'</div>');
+      }
+      return field('PIC / Teknisi', w.pic||'Belum assigned');
+    })()}
     ${field('Jenis', w.type ? (w.type.charAt(0).toUpperCase()+w.type.slice(1)) : '—')}
     ${w.date||w.createdAt?field('Tanggal Request', fmtDate((w.date||w.createdAt||'').slice(0,10))):''}
     ${w.target?field('Target Selesai', fmtDate(w.target)):''}
@@ -1828,29 +1977,152 @@ function openWOSheet(id){
     ${w.spareUsed?field('Spare Part Digunakan', w.spareUsed):''}
     ${linkedReportsHtml}
     <div style="height:4px;"></div>
-    <button class="btn-primary" onclick="prefillFormFromWO('${w.no||w.id}');closeSheetDirect();goPage('form',document.getElementById('tab-form'))">
-      ✍️ Buat Laporan untuk WO ini
-    </button>`;
-
+    <div style="height:4px;"></div>
+    <div id="sheet-btn-wrap"></div>
+    </div>`;
   document.getElementById('woSheet').classList.add('open');
 }
 
+// ════════════════════════════════════════
+// WO ASSIGNEE INFO PANEL
+// ════════════════════════════════════════
+function onWOPlanChange(woVal){
+  const panel = document.getElementById('wo-assignee-panel');
+  if(!panel) return;
+
+  if(!woVal){
+    panel.style.display = 'none';
+    return;
+  }
+
+  const w = state.woList.find(x=>x.no===woVal||x.id===woVal);
+  if(!w){ panel.style.display='none'; return; }
+
+  const assignees = w.assignees||[];
+  if(!assignees.length && !w.pic){
+    panel.style.display = 'none';
+    return;
+  }
+
+  const myName = (document.getElementById('f-tech')?.value||'').trim();
+  const myAssignee = assignees.find(a=>a.tech===myName);
+
+  // Build team list
+  const STATUS_CLR = {open:'#3b82f6',progress:'#f59e0b',done:'#10b981',onhold:'#ef4444'};
+  let listHtml = '';
+
+  if(assignees.length > 0){
+    listHtml = assignees.map(function(a){
+      const isMe = a.tech === myName;
+      const durLabel = a.duration ? a.duration+'m' : '—';
+      const noteLabel = a.note ? ' · '+a.note : '';
+      const picTag = a.isPic ? '<span style="font-size:9px;background:rgba(59,130,246,.2);color:#3b82f6;padding:1px 5px;border-radius:4px;margin-left:4px;font-weight:700;">PIC</span>' : '';
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(59,130,246,.12);">'
+        + '<div style="width:28px;height:28px;border-radius:50%;background:'+(isMe?'rgba(59,130,246,.25)':'rgba(100,116,139,.15)')+';display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:'+(isMe?'#3b82f6':'var(--text2)')+';flex-shrink:0;">'
+        +   a.tech.split(' ').map(function(s){return s[0]||'';}).slice(0,2).join('').toUpperCase()
+        + '</div>'
+        + '<div style="flex:1;min-width:0;">'
+        +   '<div style="font-size:12px;font-weight:'+(isMe?'700':'500')+';color:'+(isMe?'var(--text)':'var(--text2)')+';">'
+        +     a.tech + picTag + (isMe?' <span style="font-size:10px;color:#3b82f6;">(Kamu)</span>':'')
+        +   '</div>'
+        +   '<div style="font-size:10px;color:var(--text3);">⏱ '+durLabel+noteLabel+'</div>'
+        + '</div>'
+        + '</div>';
+    }).join('');
+  } else if(w.pic){
+    // Single PIC (old WO format)
+    const isMe = w.pic === myName;
+    listHtml = '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;">'
+      + '<div style="width:28px;height:28px;border-radius:50%;background:'+(isMe?'rgba(59,130,246,.25)':'rgba(100,116,139,.15)')+';display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:'+(isMe?'#3b82f6':'var(--text2)')+';">'
+      +   w.pic.split(' ').map(function(s){return s[0]||'';}).slice(0,2).join('').toUpperCase()
+      + '</div>'
+      + '<div style="flex:1;">'
+      +   '<div style="font-size:12px;font-weight:700;">'+w.pic+(isMe?' <span style="font-size:10px;color:#3b82f6;">(Kamu)</span>':'')+'</div>'
+      +   '<div style="font-size:10px;color:var(--text3);">PIC Utama'+(w.mttr?' · MTTR: '+w.mttr+'m':'')+'</div>'
+      + '</div>'
+      + '</div>';
+  }
+
+  document.getElementById('wo-assignee-list').innerHTML = listHtml;
+
+  // Show my duration badge
+  const myDurWrap = document.getElementById('wo-my-duration-wrap');
+  const myDurBadge = document.getElementById('wo-my-duration-badge');
+  const myNoteWrap = document.getElementById('wo-my-note-wrap');
+  const myNoteText = document.getElementById('wo-my-note-text');
+
+  if(myAssignee){
+    myDurBadge.textContent = (myAssignee.duration||'—') + ' mnt';
+    myDurWrap.style.display = 'block';
+    if(myAssignee.note){
+      myNoteText.textContent = '📌 Catatan planner: '+myAssignee.note;
+      myNoteWrap.style.display = 'block';
+    } else {
+      myNoteWrap.style.display = 'none';
+    }
+    // Auto-fill duration hint: set f-time-end if f-time-start filled
+    autoFillEndTime(myAssignee.duration);
+  } else {
+    myDurWrap.style.display = 'none';
+    myNoteWrap.style.display = 'none';
+  }
+
+  panel.style.display = 'block';
+}
+
+function autoFillEndTime(durationMin){
+  if(!durationMin) return;
+  const startEl = document.getElementById('f-time-start');
+  const endEl   = document.getElementById('f-time-end');
+  if(!startEl||!endEl||!startEl.value||endEl.value) return; // don't overwrite existing
+  const [h,m] = startEl.value.split(':').map(Number);
+  const endMin = h*60+m+parseInt(durationMin);
+  endEl.value = String(Math.floor(endMin/60)%24).padStart(2,'0')+':'+String(endMin%60).padStart(2,'0');
+}
+
+// Also trigger panel when user changes start time (for duration hint)
+document.addEventListener('DOMContentLoaded', function(){
+  const startEl = document.getElementById('f-time-start');
+  if(startEl) startEl.addEventListener('change', function(){
+    const woVal = document.getElementById('f-plan')?.value;
+    if(woVal) onWOPlanChange(woVal);
+  });
+});
+
 function prefillFormFromWO(woNo){
+  woNo = decodeURIComponent(woNo);
   const w = state.woList.find(x=>x.no===woNo||x.id===woNo);
   if(!w) return;
+
   document.getElementById('f-plan').value = woNo;
+
+  // Match area/machine
   if(w.machine){
-    // Try match area
     const areaEl = document.getElementById('f-area');
     const opts = [...areaEl.options].map(o=>o.value);
     const match = opts.find(o=>o.toLowerCase().includes(w.machine.toLowerCase().slice(0,3)));
     if(match) areaEl.value = match;
   }
+
+  // Pre-fill pekerjaan dari deskripsi WO (bisa diubah teknisi)
   if(w.desc) document.getElementById('f-work').value = w.desc;
+
   document.getElementById('f-date').value = new Date().toISOString().slice(0,10);
-  // Set current time
+
+  // Set start time = now
   const now = new Date();
-  document.getElementById('f-time-start').value = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  const hhmm = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  document.getElementById('f-time-start').value = hhmm;
+
+  // Show assignee panel & auto-calculate end time from my duration
+  onWOPlanChange(woNo);
+
+  // If I have an assignee slot, auto-fill end time
+  const myName = (document.getElementById('f-tech')?.value||'').trim();
+  const myAssignee = (w.assignees||[]).find(a=>a.tech===myName);
+  if(myAssignee && myAssignee.duration){
+    autoFillEndTime(myAssignee.duration);
+  }
 }
 
 function field(label, val){
