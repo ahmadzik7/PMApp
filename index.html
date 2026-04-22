@@ -1980,6 +1980,22 @@ function openWOSheet(id){
     <div style="height:4px;"></div>
     <div id="sheet-btn-wrap"></div>
     </div>`;
+
+ document.getElementById('sheet-body-content').innerHTML = `
+    ${field('Nama Pekerjaan', w.desc||'—')}
+    ${field('Mesin / Area', w.machine||'—')}
+    ${field('PIC / Teknisi', w.pic||'Belum assigned')}
+    ${field('Jenis', w.type ? (w.type.charAt(0).toUpperCase()+w.type.slice(1)) : '—')}
+    ${w.date||w.createdAt?field('Tanggal Request', fmtDate((w.date||w.createdAt||'').slice(0,10))):''}
+    ${w.target?field('Target Selesai', fmtDate(w.target)):''}
+    ${w.estDuration?field('Estimasi Durasi', w.estDuration+' jam'):''}
+    ${w.action?field('Tindakan', w.action):''}
+    ${w.spareUsed?field('Spare Part Digunakan', w.spareUsed):''}
+    ${linkedReportsHtml}
+    <div style="height:4px;"></div>
+    <button class="btn-primary" onclick="prefillFormFromWO('${w.no||w.id}');closeSheetDirect();goPage('form',document.getElementById('tab-form'))">
+      ✍️ Buat Laporan untuk WO ini
+    </button>`;
   document.getElementById('woSheet').classList.add('open');
 }
 
