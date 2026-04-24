@@ -1427,10 +1427,16 @@ async function _pushToGAS(newReport, woRef, status, isAdhoc, adhocTitle, area, d
     const current = await getRes.json();
 
     // Rebuild techReports dari myReports lokal
-    current.techReports = state.myReports.map(r=>({
+// FIX: merge techReports — jangan overwrite milik teknisi lain
+    const existingReports = current.techReports || [];
+    const myUpdated = state.myReports.map(r=>({
       ...r,
       photos:(r.photos||[]).map(p=>({url:p.url,thumb:p.thumb}))
-    })).slice(0,200);
+    }));
+    const myIds = new Set(myUpdated.map(r=>r.id));
+    // Pertahankan laporan teknisi lain, timpa hanya milik sendiri
+    const othersReports = existingReports.filter(r=>r.tech !== TECH_NAME && !myIds.has(r.id));
+    current.techReports = [...othersReports, ...myUpdated].slice(0,500);
 
     // Update WO status jika ada woRef
     if(newReport && woRef && status){
