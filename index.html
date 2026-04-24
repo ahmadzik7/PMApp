@@ -1331,9 +1331,13 @@ async function submitReport(){
       }
     }
 
+    const reportId = (_editMode==='edit'&&_editId) ? _editId
+      : (_editMode==='update'&&_parentId) ? null
+      : Date.now().toString(36)+Math.random().toString(36).slice(2,5);
     const woRef = isAdhoc ? (_parentId
-      ? (state.myReports.find(x=>x.id===_parentId)?.woRef||'')
-      : '') : document.getElementById('f-plan').value;
+      ? (state.myReports.find(x=>x.id===_parentId)?.woRef || (reportId ? reportId+'_wo' : ''))
+      : (reportId ? reportId+'_wo' : ''))
+      : document.getElementById('f-plan').value;
 
     // Gabungkan foto lama + baru
     const allPhotos = [
@@ -1356,7 +1360,7 @@ async function submitReport(){
         };
         state.myReports[idx] = updated;
         localStorage.setItem('pm_tech_reports', JSON.stringify(state.myReports));
-        await _pushToGAS();
+        await _pushToGAS(updated, updated.woRef, updated.status, updated.isAdhoc, updated.adhocTitle, updated.area, updated.date);
         toast('✓ Laporan diperbarui!','success');
       }
 
@@ -1477,9 +1481,9 @@ async function _pushToGAS(newReport, woRef, status, isAdhoc, adhocTitle, area, d
     if(newReport && isAdhoc && !newReport.parentId){
       const woList = current.wo||[];
       const woNo   = 'WO-ADH-'+newReport.id.slice(0,6).toUpperCase();
-      if(!woList.find(w=>w.desc===adhocTitle&&w.date===date)){
+      if(!woList.find(w=>w.source==='adhoc'&&w.desc===adhocTitle)){
         woList.unshift({
-          id:newReport.id+'_wo', no:woNo, date,
+          id:newReport.id+'_wo', no:newReport.id+'_wo', date,
           type:'corrective', machine:area,
           desc:adhocTitle||newReport.work, priority:'M',
           pic:newReport.tech, status:status==='done'?'done':'progress',
@@ -1488,6 +1492,9 @@ async function _pushToGAS(newReport, woRef, status, isAdhoc, adhocTitle, area, d
           createdAt:new Date().toISOString(),
         });
         current.wo = woList;
+        // Backfill woRef di laporan supaya link ke WO adhoc
+        const trIdx = current.techReports.findIndex(r=>r.id===newReport.id);
+        if(trIdx>-1) current.techReports[trIdx].woRef = newReport.id+'_wo';
       }
     }
 
