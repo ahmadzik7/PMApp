@@ -863,6 +863,7 @@ let TECH_NAME = localStorage.getItem('pm_tech_name') || '';
 let state = {
   woList: [],
   myReports: JSON.parse(localStorage.getItem('pm_tech_reports') || '[]'),
+  woList: (function(){ try{ return JSON.parse(localStorage.getItem('pm_wo_cache')||'[]'); }catch(e){ return []; } })(),
   photos: [],      // { file, dataUrl, compressed }
   lbImages: [],
   lbIdx: 0,
@@ -876,7 +877,8 @@ function init(){
   // Pre-fill config URL field with default/saved value
   const cfgUrlEl = document.getElementById('cfg-url');
   if(cfgUrlEl) cfgUrlEl.value = localStorage.getItem('pm_tech_gas_url') || DEFAULT_GAS_URL;
-
+// Populate WO select dari cache lokal
+  if(state.woList && state.woList.length > 0) populateWOSelect();
   if(TECH_NAME){
     // Name is set — skip config screen, go straight in
     document.getElementById('configScreen').style.display = 'none';
@@ -1138,6 +1140,8 @@ async function syncData(){
     populateWOSelect();
     renderWOList();
     renderWOStats();
+    // Cache WO list ke localStorage supaya tetap ada setelah refresh
+    try { localStorage.setItem('pm_wo_cache', JSON.stringify(state.woList)); } catch(e){}
     setSyncUI('ok');
     // Refresh assignee panel if a WO is already selected in form
     const curWO = document.getElementById('f-plan')?.value;
