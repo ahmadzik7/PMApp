@@ -742,8 +742,12 @@ body{
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z"/></svg>
     <span id="submitBtnLabel">Kirim Laporan</span>
   </button>
-
-  <div style="height:12px;"></div>
+  <button class="btn-primary" onclick="bersihkanStorage()" 
+  style="background:#ef4444;color:white;padding:8px 16px;border-radius:8px;border:none;font-size:13px;width:100%;margin-top:8px;">
+  🗑 Bersihkan Cache (jika aplikasi error)
+  </button>
+  <div style="height:12px;">
+  </div>
 
   <!-- History laporan saya -->
   <div class="sec-label" style="margin-top:8px;">Laporan Terakhir Saya</div>
@@ -1345,8 +1349,8 @@ async function submitReport(){
 
     // Gabungkan foto lama + baru
     const allPhotos = [
-      ...oldPhotos.map(p=>({dataUrl:p.dataUrl,url:p.url||'',thumb:p.thumb||''})),
-      ...newPhotos.map((p,i)=>({dataUrl:p.dataUrl,url:photoUrls[i]?.url||'',thumb:photoUrls[i]?.thumb||''})),
+      ...oldPhotos.map(p=>({url:p.url||'',thumb:p.thumb||''})),
+      ...newPhotos.map((p,i)=>({url:photoUrls[i]?.url||'',thumb:photoUrls[i]?.thumb||''})),,
     ];
 
     // ── MODE EDIT: update laporan yang ada ──────────────────
@@ -1363,7 +1367,7 @@ async function submitReport(){
           updatedAt: new Date().toISOString(),
         };
         state.myReports[idx] = updated;
-        localStorage.setItem('pm_tech_reports', JSON.stringify(state.myReports));
+        _saveReportsLocal();
         await _pushToGAS(updated, updated.woRef, updated.status, updated.isAdhoc, updated.adhocTitle, updated.area, updated.date);
         toast('✓ Laporan diperbarui!','success');
       }
@@ -1389,7 +1393,7 @@ async function submitReport(){
       }
       state.myReports.unshift(newReport);
       if(state.myReports.length>60) state.myReports=state.myReports.slice(0,60);
-      localStorage.setItem('pm_tech_reports', JSON.stringify(state.myReports));
+      _saveReportsLocal();
       await _pushToGAS(newReport, woRef, status, isAdhoc, adhocTitle, area, date);
       toast('✓ Update lanjutan terkirim!','success');
 
@@ -1406,7 +1410,7 @@ async function submitReport(){
       };
       state.myReports.unshift(report);
       if(state.myReports.length>60) state.myReports=state.myReports.slice(0,60);
-      localStorage.setItem('pm_tech_reports', JSON.stringify(state.myReports));
+      _saveReportsLocal();
       await _pushToGAS(report, woRef, status, isAdhoc, adhocTitle, area, date);
       toast('✓ Laporan berhasil dikirim!','success');
     }
@@ -2446,7 +2450,49 @@ self.addEventListener('fetch', e=>{
     deferredPrompt = e;
     showInstallBanner();
   });
+  
+  function _saveReportsLocal(){
+  try {
+    // Strip dataUrl sebelum simpan — hemat space, URL drive sudah ada
+    const lean = state.myReports.map(r => ({
+      ...r,
+      photos: (r.photos||[]).map(p => ({url:p.url||'', thumb:p.thumb||''}))
+    }));
+    localStorage.setItem('pm_tech_reports', JSON.stringify(lean));
+  } catch(e) {
+    console.warn('localStorage penuh, mencoba hapus cache lama...');
+    localStorage.removeItem('pm_wo_cache');
+    try {
+      const lean = state.myReports.slice(-20).map(r => ({
+        ...r,
+        photos: (r.photos||[]).map(p => ({url:p.url||'', thumb:p.thumb||''}))
+      }));
+      localStorage.setItem('pm_tech_reports', JSON.stringify(lean));
+    } catch(e2) {
+      toast('⚠️ Storage penuh. Hapus laporan lama untuk melanjutkan.', 'warn');
+    }
+  }
+}
 
+  function bersihkanStorage(){
+  if(!confirm('Bersihkan cache foto dari penyimpanan lokal?\n\nData laporan TIDAK akan hilang, hanya cache foto yang dihapus.')) return;
+  try {
+    const reports = JSON.parse(localStorage.getItem('pm_tech_reports') || '[]');
+    const cleaned = reports.map(r => ({
+      ...r,
+      photos: (r.photos||[]).map(p => ({url:p.url||'', thumb:p.thumb||''}))
+    }));
+    localStorage.setItem('pm_tech_reports', JSON.stringify(cleaned));
+    localStorage.removeItem('pm_wo_cache');
+    toast('✅ Cache dibersihkan! Silakan coba lagi.', 'success');
+  } catch(e) {
+    // Kalau masih penuh, hapus semua cache
+    localStorage.removeItem('pm_wo_cache');
+    localStorage.removeItem('pm_tech_reports');
+    state.myReports = [];
+    toast('⚠️ Storage sangat penuh — data lokal dihapus. Data di Drive tetap aman.', 'warn');
+  }
+}
   function showInstallBanner(){
     if(document.getElementById('install-banner')) return;
     const banner = document.createElement('div');
