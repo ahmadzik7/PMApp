@@ -866,7 +866,12 @@ let TECH_NAME = localStorage.getItem('pm_tech_name') || '';
 
 let state = {
   woList: [],
-  myReports: JSON.parse(localStorage.getItem('pm_tech_reports') || '[]'),
+  myReports: (function(){
+    const name = localStorage.getItem('pm_tech_name')||'';
+    const userKey = 'pm_tech_reports_' + name.toLowerCase().replace(/[^a-z0-9]/g,'_');
+    const d = localStorage.getItem(userKey) || localStorage.getItem('pm_tech_reports') || '[]';
+    try{ return JSON.parse(d); }catch(e){ return []; }
+  })(),
   woList: (function(){ try{ return JSON.parse(localStorage.getItem('pm_wo_cache')||'[]'); }catch(e){ return []; } })(),
   photos: [],      // { file, dataUrl, compressed }
   lbImages: [],
@@ -1145,7 +1150,15 @@ async function syncData(){
     renderWOList();
     renderWOStats();
     // Cache WO list ke localStorage supaya tetap ada setelah refresh
-    try { localStorage.setItem('pm_wo_cache', JSON.stringify(state.woList)); } catch(e){}
+    // Cache WO minimal (no heavy fields) untuk offline fallback
+    try {
+      const woLean = state.woList.map(function(w){
+        return {id:w.id,no:w.no,machine:w.machine,desc:w.desc,status:w.status,
+          pic:w.pic,priority:w.priority,target:w.target,section:w.section,
+          assignees:(w.assignees||[]).map(function(a){return {tech:a.tech,duration:a.duration,note:a.note,isPic:a.isPic};})};
+      });
+      localStorage.setItem('pm_wo_cache', JSON.stringify(woLean));
+    } catch(e){ localStorage.removeItem('pm_wo_cache'); }
     setSyncUI('ok');
     // Refresh assignee panel if a WO is already selected in form
     const curWO = document.getElementById('f-plan')?.value;
@@ -1350,7 +1363,7 @@ async function submitReport(){
     // Gabungkan foto lama + baru
     const allPhotos = [
       ...oldPhotos.map(p=>({url:p.url||'',thumb:p.thumb||''})),
-      ...newPhotos.map((p,i)=>({url:photoUrls[i]?.url||'',thumb:photoUrls[i]?.thumb||''})),,
+      ...newPhotos.map((p,i)=>({url:photoUrls[i]?.url||'',thumb:photoUrls[i]?.thumb||''}))
     ];
 
     // ── MODE EDIT: update laporan yang ada ──────────────────
@@ -2347,6 +2360,177 @@ init();
 
 <script>
 // ══════════════════════════════════════════
+
+// ════════════════════════════════════════
+// GANTI LOGIN
+// ════════════════════════════════════════
+function showChangeLogin(){
+  const modal = document.getElementById('change-login-modal');
+  if(!modal) return;
+  const cur = TECH_NAME || localStorage.getItem('pm_tech_name') || '—';
+  document.getElementById('cl-current-name').textContent = cur;
+  const inp = document.getElementById('cl-new-name');
+  inp.value = cur;
+
+  // Suggestions dari WO assignees + riwayat laporan
+  const names = new Set();
+  state.woList.forEach(function(w){
+    if(w.pic) names.add(w.pic);
+    (w.assignees||[]).forEach(function(a){ if(a.tech) names.add(a.tech); });
+  });
+  state.myReports.forEach(function(r){ if(r.tech) names.add(r.tech); });
+
+  const sugWrap = document.getElementById('cl-tech-suggestions');
+  if(names.size > 0){
+    const arr = [...names].slice(0, 8);
+    sugWrap.innerHTML = '<div style="width:100%;font-size:9px;color:var(--text3);font-family:var(--mono);letter-spacing:1px;margin-bottom:4px;">PILIH DARI DAFTAR:</div>';
+    arr.forEach(function(name){
+      const isMe = name === cur;
+      const btn = document.createElement('button');
+      btn.dataset.name = name;
+      btn.textContent = name + (isMe ? ' ✓' : '');
+      btn.style.cssText = 'padding:5px 10px;border-radius:20px;border:1.5px solid '+(isMe?'var(--accent)':'var(--border)')+';background:'+(isMe?'rgba(59,130,246,.1)':'transparent')+';color:'+(isMe?'var(--accent)':'var(--text2)')+';font-size:11px;cursor:pointer;';
+      btn.addEventListener('click', function(){ inp.value = this.dataset.name; });
+      sugWrap.appendChild(btn);
+    });
+    sugWrap.style.display = 'flex';
+  } else {
+    sugWrap.innerHTML = '';
+    sugWrap.style.display = 'none';
+  }
+
+  modal.style.display = 'flex';
+  setTimeout(function(){ inp.focus(); inp.select(); }, 100);
+}
+
+function closeChangeLogin(){
+  const modal = document.getElementById('change-login-modal');
+  if(modal) modal.style.display = 'none';
+}
+
+function saveChangeLogin(){
+  const inp = document.getElementById('cl-new-name');
+  const newName = inp ? inp.value.trim() : '';
+  if(!newName){ toast('Masukkan nama teknisi', 'error'); return; }
+
+  TECH_NAME = newName;
+  localStorage.setItem('pm_tech_name', newName);
+
+  // Update UI
+  const techEl = document.getElementById('f-tech');
+  if(techEl) techEl.value = newName;
+
+  const sub = document.getElementById('headerSub');
+  if(sub) sub.textContent = '👤 ' + newName;
+
+  const alertEl = document.getElementById('form-user-alert');
+  const alertTxt = document.getElementById('form-user-text');
+  if(alertEl) alertEl.style.display = 'flex';
+  if(alertTxt) alertTxt.textContent = 'Login sebagai: ' + newName;
+
+  // Load laporan milik user baru dari localStorage jika ada
+  const userKey = 'pm_tech_reports_' + newName.toLowerCase().replace(/\s+/g,'_');
+  const saved = localStorage.getItem(userKey) || localStorage.getItem('pm_tech_reports');
+  if(saved){ try{ state.myReports = JSON.parse(saved); }catch(e){} }
+
+  closeChangeLogin();
+  toast('✓ Login diubah ke: ' + newName, 'success');
+  renderMyReports();
+  renderWOList();
+  populateWOSelect();
+  const curWO = document.getElementById('f-plan') && document.getElementById('f-plan').value;
+  if(curWO) onWOPlanChange(curWO);
+}
+
+function confirmLogout(){
+  if(!confirm('Hapus semua data lokal dan kembali ke layar login?\n\nData di server (Google Drive) tidak akan terhapus.')) return;
+  localStorage.clear();
+  location.reload();
+}
+
+function _saveReportsLocal(){
+  const userKey = "pm_tech_reports_" + (TECH_NAME||"").toLowerCase().replace(/[^a-z0-9]/g,"_");
+  const lean = state.myReports.slice(0,50).map(function(r){
+    return {id:r.id,date:r.date,tech:r.tech,area:r.area,woRef:r.woRef||r.plan||"",work:r.work,
+      timeStart:r.timeStart,timeEnd:r.timeEnd,status:r.status,notes:r.notes||"",
+      isAdhoc:r.isAdhoc||false,adhocTitle:r.adhocTitle||"",parentId:r.parentId||"",
+      createdAt:r.createdAt||"",
+      photos:(r.photos||[]).map(function(p){return {url:p.url||"",thumb:p.thumb||""};})};
+  });
+  const payload = JSON.stringify(lean);
+  if(payload.length > 800000){
+    const trimmed = lean.slice(0,20).map(function(r){return Object.assign({},r,{photos:[]});});
+    try{localStorage.setItem(userKey,JSON.stringify(trimmed));}catch(e){}
+    return;
+  }
+  try{
+    localStorage.setItem(userKey, payload);
+    // Hapus key lama generic jika masih ada
+    try{localStorage.removeItem("pm_tech_reports");}catch(e){}
+  }catch(e){
+    _clearHeavyCache();
+    try{
+      const slim=lean.slice(0,15).map(function(r){return Object.assign({},r,{photos:[]});});
+      localStorage.setItem(userKey,JSON.stringify(slim));
+      toast("Storage hampir penuh — foto lokal dibersihkan, data aman di Drive.","warn");
+    }catch(e2){ console.error("[Storage] masih penuh:",e2); }
+  }
+}
+
+function _clearHeavyCache(){
+  var toRemove=[];
+  for(var i=0;i<localStorage.length;i++){
+    var k=localStorage.key(i);
+    if(k&&(k==="pm_wo_cache"||k.startsWith("pm_wo_")||k==="pm_tech_reports")){toRemove.push(k);}
+  }
+  toRemove.forEach(function(k){localStorage.removeItem(k);});
+  console.log("[Storage] Cleared cache:",toRemove);
+}
+
+function bersihkanStorage(){
+  if(!confirm('Bersihkan cache lokal?\n\nLaporan yang sudah terkirim ke Drive tetap aman.')) return;
+  _clearHeavyCache();
+  // Re-save reports lean (no photos dataUrl)
+  _saveReportsLocal();
+  toast('Cache dibersihkan!', 'success');
+}
+function showInstallBanner(){
+  if(document.getElementById('install-banner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'install-banner';
+  banner.innerHTML = `
+    <div style="position:fixed;bottom:calc(80px + env(safe-area-inset-bottom,0px));left:12px;right:12px;
+                background:linear-gradient(135deg,#0f172a,#1e293b);
+                border:1px solid #334155;border-radius:14px;
+                padding:14px 16px;z-index:999;
+                box-shadow:0 8px 32px rgba(0,0,0,.5);
+                display:flex;align-items:center;gap:12px;"
+         id="install-inner">
+      <img src="${LOGO_B64}" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex-shrink:0;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;font-weight:800;color:#f1f5f9;">Install PM Teknisi</div>
+        <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:10px;color:#64748b;margin-top:1px;">Tambah ke layar utama HP</div>
+      </div>
+      <button onclick="doInstall()" style="background:#3b82f6;border:none;border-radius:8px;
+              color:#fff;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:700;
+              padding:8px 14px;cursor:pointer;flex-shrink:0;">Install</button>
+      <button onclick="document.getElementById('install-banner').remove()"
+              style="background:transparent;border:none;color:#64748b;font-size:18px;cursor:pointer;padding:4px;flex-shrink:0;">✕</button>
+    </div>`;
+  document.body.appendChild(banner);
+}
+
+window.doInstall = async function(){
+  if(!deferredPrompt) return;
+  deferredPrompt.prompt();
+  const res = await deferredPrompt.userChoice;
+  deferredPrompt = null;
+  const banner = document.getElementById('install-banner');
+  if(banner) banner.remove();
+  if(res.outcome==='accepted') toast('✓ Aplikasi berhasil diinstall!','success');
+};
+
+
 // PWA SETUP — Logo, Manifest, Install Prompt
 // ══════════════════════════════════════════
 (function(){
@@ -2451,84 +2635,6 @@ self.addEventListener('fetch', e=>{
     showInstallBanner();
   });
   
-  function _saveReportsLocal(){
-  try {
-    // Strip dataUrl sebelum simpan — hemat space, URL drive sudah ada
-    const lean = state.myReports.map(r => ({
-      ...r,
-      photos: (r.photos||[]).map(p => ({url:p.url||'', thumb:p.thumb||''}))
-    }));
-    localStorage.setItem('pm_tech_reports', JSON.stringify(lean));
-  } catch(e) {
-    console.warn('localStorage penuh, mencoba hapus cache lama...');
-    localStorage.removeItem('pm_wo_cache');
-    try {
-      const lean = state.myReports.slice(-20).map(r => ({
-        ...r,
-        photos: (r.photos||[]).map(p => ({url:p.url||'', thumb:p.thumb||''}))
-      }));
-      localStorage.setItem('pm_tech_reports', JSON.stringify(lean));
-    } catch(e2) {
-      toast('⚠️ Storage penuh. Hapus laporan lama untuk melanjutkan.', 'warn');
-    }
-  }
-}
-
-  function bersihkanStorage(){
-  if(!confirm('Bersihkan cache foto dari penyimpanan lokal?\n\nData laporan TIDAK akan hilang, hanya cache foto yang dihapus.')) return;
-  try {
-    const reports = JSON.parse(localStorage.getItem('pm_tech_reports') || '[]');
-    const cleaned = reports.map(r => ({
-      ...r,
-      photos: (r.photos||[]).map(p => ({url:p.url||'', thumb:p.thumb||''}))
-    }));
-    localStorage.setItem('pm_tech_reports', JSON.stringify(cleaned));
-    localStorage.removeItem('pm_wo_cache');
-    toast('✅ Cache dibersihkan! Silakan coba lagi.', 'success');
-  } catch(e) {
-    // Kalau masih penuh, hapus semua cache
-    localStorage.removeItem('pm_wo_cache');
-    localStorage.removeItem('pm_tech_reports');
-    state.myReports = [];
-    toast('⚠️ Storage sangat penuh — data lokal dihapus. Data di Drive tetap aman.', 'warn');
-  }
-}
-  function showInstallBanner(){
-    if(document.getElementById('install-banner')) return;
-    const banner = document.createElement('div');
-    banner.id = 'install-banner';
-    banner.innerHTML = `
-      <div style="position:fixed;bottom:calc(80px + env(safe-area-inset-bottom,0px));left:12px;right:12px;
-                  background:linear-gradient(135deg,#0f172a,#1e293b);
-                  border:1px solid #334155;border-radius:14px;
-                  padding:14px 16px;z-index:999;
-                  box-shadow:0 8px 32px rgba(0,0,0,.5);
-                  display:flex;align-items:center;gap:12px;"
-           id="install-inner">
-        <img src="${LOGO_B64}" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex-shrink:0;">
-        <div style="flex:1;min-width:0;">
-          <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;font-weight:800;color:#f1f5f9;">Install PM Teknisi</div>
-          <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:10px;color:#64748b;margin-top:1px;">Tambah ke layar utama HP</div>
-        </div>
-        <button onclick="doInstall()" style="background:#3b82f6;border:none;border-radius:8px;
-                color:#fff;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:700;
-                padding:8px 14px;cursor:pointer;flex-shrink:0;">Install</button>
-        <button onclick="document.getElementById('install-banner').remove()"
-                style="background:transparent;border:none;color:#64748b;font-size:18px;cursor:pointer;padding:4px;flex-shrink:0;">✕</button>
-      </div>`;
-    document.body.appendChild(banner);
-  }
-
-  window.doInstall = async function(){
-    if(!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const res = await deferredPrompt.userChoice;
-    deferredPrompt = null;
-    const banner = document.getElementById('install-banner');
-    if(banner) banner.remove();
-    if(res.outcome==='accepted') toast('✓ Aplikasi berhasil diinstall!','success');
-  };
-
   // iOS: tampilkan instruksi manual (tidak ada beforeinstallprompt di Safari)
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
@@ -2563,5 +2669,30 @@ self.addEventListener('fetch', e=>{
   }
 })();
 </script>
+<!-- CHANGE LOGIN MODAL -->
+<div id="change-login-modal" onclick="if(event.target===this)closeChangeLogin()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:var(--surface);border-radius:16px;padding:24px;width:100%;max-width:380px;border:1px solid var(--border);box-shadow:0 20px 60px rgba(0,0,0,.4);">
+    <div style="font-family:var(--mono);font-size:10px;color:var(--accent);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">GANTI LOGIN</div>
+    <div style="font-size:18px;font-weight:800;color:var(--text);margin-bottom:16px;">Ubah Nama Teknisi</div>
+    <div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:11px;color:var(--amber);">
+      ⚠️ Login saat ini: <b id="cl-current-name"></b><br>
+      <span style="color:var(--text2);font-size:10px;">Laporan yang sudah terkirim tidak akan berubah.</span>
+    </div>
+    <div style="margin-bottom:10px;">
+      <div style="font-size:11px;font-weight:600;margin-bottom:6px;color:var(--text2);">Nama Teknisi Baru <span style="color:var(--red);">*</span></div>
+      <input type="text" id="cl-new-name" placeholder="Masukkan nama lengkap..."
+        style="width:100%;background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-size:14px;padding:11px 12px;border-radius:8px;outline:none;box-sizing:border-box;"
+        onkeydown="if(event.key==='Enter')saveChangeLogin()">
+    </div>
+    <div id="cl-tech-suggestions" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;min-height:0;"></div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <button onclick="closeChangeLogin()" style="flex:1;padding:12px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;">Batal</button>
+      <button onclick="saveChangeLogin()" style="flex:2;padding:12px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer;">✓ Ganti Login</button>
+    </div>
+    <button onclick="confirmLogout()" style="width:100%;padding:10px;border-radius:8px;border:1.5px solid rgba(239,68,68,.3);background:rgba(239,68,68,.05);color:var(--red);font-size:12px;font-weight:600;cursor:pointer;">
+      🚪 Keluar & Hapus Data Lokal
+    </button>
+  </div>
+</div>
 </body>
 </html>
